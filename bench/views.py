@@ -1,4 +1,6 @@
 import json
+import statistics
+
 from django.conf import settings
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render
@@ -10,7 +12,7 @@ from .models import Metric
 def dashboard(request):
     """
     Main dashboard page.
-    Later we'll add charts and client-side JS that call /api/metrics/data.
+    The HTML shell; charts fetch data from /api/metrics/data via JS.
     """
     return render(request, "bench/dashboard.html")
 
@@ -49,16 +51,39 @@ def api_ingest(request):
     expected_key = getattr(settings, "BENCH_API_KEY", None)
 
     if not expected_key:
-        return JsonResponse({"error": "Server BENCH_API_KEY not configured"}, status=500)
+        return JsonResponse(
+            {"error": "Server BENCH_API_KEY not configured"}, status=500
+        )
 
     if api_key_header != expected_key:
         return JsonResponse({"error": "Unauthorized"}, status=403)
 
     # --- Parse JSON body ---
     try:
-        payload = json.loads(request.body.decode("utf-8"))
+        payload = json.loads(request.body.decode("utf-8") or "{}")
     except json.JSONDecodeError:
         return HttpResponseBadRequest("Invalid JSON payload")
+
+    # Helper: allow both short and long keys if you ever send the long ones
+    def get_metric_val(short_key: str, long_key: str):
+        if short_key in payload:
+            return payload.get(short_key)
+        if long_key in payload:
+            return payload.get(long_key)
+        return 0.0
+
+    # Normalise to floats (None / "" -> 0.0)
+    def as_float(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    lce_val = as_float(get_metric_val("lce", "layer_cache_efficiency"))
+    prt_val = as_float(get_metric_val("prt", "pipeline_recovery_time"))
+    smo_val = as_float(get_metric_val("smo", "secrets_mgmt_overhead"))
+    dept_val = as_float(get_metric_val("dept", "dynamic_env_time"))
+    clbc_val = as_float(get_metric_val("clbc", "cross_layer_consistency"))
 
     # --- Create Metric entry ---
     metric = Metric.objects.create(
@@ -68,11 +93,11 @@ def api_ingest(request):
         run_attempt=payload.get("run_attempt", ""),
         branch=payload.get("branch", ""),
         commit_sha=payload.get("commit_sha", ""),
-        lce=float(payload.get("lce") or 0.0),
-        prt=float(payload.get("prt") or 0.0),
-        smo=float(payload.get("smo") or 0.0),
-        dept=float(payload.get("dept") or 0.0),
-        clbc=float(payload.get("clbc") or 0.0),
+        lce=lce_val,
+        prt=prt_val,
+        smo=smo_val,
+        dept=dept_val,
+        clbc=clbc_val,
         notes=payload.get("notes", ""),
     )
 
@@ -90,7 +115,7 @@ def api_metrics_data(request):
     Returns recent metrics and aggregates for a given source.
 
     Query params:
-    - source: "github", "jenkins", "codepipeline" or empty for all
+    - source: "github", "jenkins", "codepipeline" or empty/invalid for all
 
     Response example:
 
@@ -136,11 +161,14 @@ def api_metrics_data(request):
     # Limit to last 100 entries (newest first)
     qs = qs.order_by("-created_at")[:100]
 
-    # Build list of rows (reverse to chronological order)
-    rows = []
-    total_lce = total_prt = total_smo = total_dept = total_clbc = 0.0
+    # Evaluate once, then reverse for chronological order in charts
+    metrics = list(qs)
+    metrics.reverse()  # oldest first
 
-    for m in reversed(qs):  # oldest first
+    rows = []
+    lces, prts, smos, depts, clbcs = [], [], [], [], []
+
+    for m in metrics:
         rows.append(
             {
                 "t": m.created_at.isoformat(),
@@ -151,31 +179,27 @@ def api_metrics_data(request):
                 "clbc": m.clbc,
             }
         )
-        total_lce += m.lce
-        total_prt += m.prt
-        total_smo += m.smo
-        total_dept += m.dept
-        total_clbc += m.clbc
+        lces.append(m.lce)
+        prts.append(m.prt)
+        smos.append(m.smo)
+        depts.append(m.dept)
+        clbcs.append(m.clbc)
 
-    count = qs.count() if hasattr(qs, "count") else len(rows)
-    if count > 0:
-        avg_lce = total_lce / count
-        avg_prt = total_prt / count
-        avg_smo = total_smo / count
-        avg_dept = total_dept / count
-        avg_clbc = total_clbc / count
-    else:
-        avg_lce = avg_prt = avg_smo = avg_dept = avg_clbc = 0.0
+    def avg(values):
+        clean = [v for v in values if v is not None]
+        return float(round(statistics.fmean(clean), 2)) if clean else 0.0
+
+    count = len(metrics)
 
     data = {
         "source": source,
         "count": count,
         "avg": {
-            "lce": avg_lce,
-            "prt": avg_prt,
-            "smo": avg_smo,
-            "dept": avg_dept,
-            "clbc": avg_clbc,
+            "lce": avg(lces),
+            "prt": avg(prts),
+            "smo": avg(smos),
+            "dept": avg(depts),
+            "clbc": avg(clbcs),
         },
         "rows": rows,
     }
