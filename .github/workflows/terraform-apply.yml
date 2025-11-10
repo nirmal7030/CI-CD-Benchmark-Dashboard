@@ -54,7 +54,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Redeploy container on EC2 via SSM (fixed JSON)
+      - name: Redeploy container on EC2 via SSM (timed)
         id: deploy_step
         env:
           EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
@@ -64,35 +64,37 @@ jobs:
           set -e
           echo "Redeploying on EC2 instance: $EC2_INSTANCE_ID"
 
-          # --- Build JSON template safely ---
-          cat > ssm-template.json <<'EOF'
+          # Create properly formatted SSM commands with valid JSON
+          cat > ssm-commands.json << 'EOF'
           {
             "commands": [
               "set -e",
-              "cd /opt/cicd-benchmark || { echo 'Directory not found'; exit 1; }",
+              "cd /opt/cicd-benchmark || { echo 'Directory /opt/cicd-benchmark not found'; exit 1; }",
               "echo '[EC2] Pulling latest code...'",
               "git pull --rebase || true",
               "echo '[EC2] Building image...'",
-              "docker build -t cicd-benchmark:prod . || { echo 'Build failed'; exit 1; }",
-              "echo '[EC2] Restarting container...'",
+              "docker build -t cicd-benchmark:prod . || { echo 'Docker build failed'; exit 1; }",
+              "echo '[EC2] Stopping old container (if any)...'",
               "docker stop cicdbench || true",
               "docker rm cicdbench || true",
-              "docker run -d --name cicdbench --restart unless-stopped -p 80:8000 -e DEBUG=0 -e SECRET_KEY=${SECRET_KEY} -e ALLOWED_HOSTS=* -e BENCH_API_KEY=${BENCH_API_KEY} cicd-benchmark:prod",
+              "echo '[EC2] Starting new container...'",
+              "docker run -d --name cicdbench --restart unless-stopped -p 80:8000 -e DEBUG=0 -e SECRET_KEY=$SECRET_KEY -e ALLOWED_HOSTS=* -e BENCH_API_KEY=$BENCH_API_KEY cicd-benchmark:prod || { echo 'Docker run failed'; exit 1; }",
+              "echo '[EC2] Waiting for container to be ready...'",
+              "sleep 15",
               "echo '[EC2] Running migrations...'",
-              "docker exec cicdbench python manage.py migrate --noinput || echo 'Migration issue ignored'",
+              "docker exec cicdbench python manage.py migrate --noinput || { echo 'Migrations failed'; exit 1; }",
               "echo '[EC2] Deploy complete.'"
             ]
           }
           EOF
 
-          # --- Substitute env vars into JSON safely ---
-          sudo apt-get update -y && sudo apt-get install -y gettext jq
-          envsubst < ssm-template.json > ssm-commands.json
+          echo "SSM Commands JSON:"
+          cat ssm-commands.json
 
-          echo "Validating final JSON..."
-          cat ssm-commands.json | jq . > /dev/null || { echo "::error::Invalid JSON after envsubst"; cat ssm-commands.json; exit 1; }
+          START=$(date +%s)
 
-          echo "Sending SSM command..."
+          # Send SSM command
+          echo "Sending SSM command to instance..."
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
@@ -102,12 +104,36 @@ jobs:
 
           echo "SSM Command ID: $CMD_ID"
 
-          echo "Waiting for completion..."
-          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" || echo "::warning::SSM waiter timed out"
+          # Wait for command execution
+          echo "Waiting for command completion..."
+          if ! aws ssm wait command-executed \
+            --command-id "$CMD_ID" \
+            --instance-id "$EC2_INSTANCE_ID"; then
+            echo "::error:: SSM command execution timed out or failed"
+            exit 1
+          fi
+
+          # Check command status
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$CMD_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query "Status" --output text)
+
+          echo "SSM Command Status: $STATUS"
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error:: SSM command failed with status: $STATUS"
+            echo "Getting command output for debugging..."
+            aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$EC2_INSTANCE_ID"
+            exit 1
+          fi
 
           END=$(date +%s)
-          echo "deploy_duration=$((END-START))" >> "$GITHUB_OUTPUT"
-          echo "✅ Deploy step completed successfully."
+          DEPLOY_DURATION=$((END-START))
+          echo "deploy_duration=$DEPLOY_DURATION" >> "$GITHUB_OUTPUT"
+          echo "Deployment completed successfully in ${DEPLOY_DURATION}s"
 
       - name: Post novel metrics to app
         continue-on-error: true
@@ -119,26 +145,46 @@ jobs:
           DEPLOY_DUR:    ${{ steps.deploy_step.outputs.deploy_duration }}
         run: |
           set -e
+
+          # Validate BENCH_API_KEY
+          if [ -z "$BENCH_API_KEY" ]; then
+            echo "::warning:: BENCH_API_KEY is empty in GitHub Secrets."
+            exit 0
+          fi
+
+          # Normalize the base URL
           RAW_URL="$APP_BASE_URL"
-          BASE_URL="$(echo "$RAW_URL" | tr -d '\"[:space:]')"
+          BASE_URL="$(echo "$RAW_URL" | sed 's/["'"'"'[:space:]]//g')"
+
+          if [ -z "$BASE_URL" ]; then
+            echo "::warning:: APP_BASE_URL secret is empty"
+            exit 0
+          fi
+
+          # Ensure URL has protocol
           case "$BASE_URL" in
-            http://*|https://*) ;; 
+            http://*|https://*) ;;
             *) BASE_URL="http://$BASE_URL" ;;
           esac
-          echo "Using BASE_URL=$BASE_URL"
 
+          echo "Using BASE_URL: $BASE_URL"
+
+          # Set fallbacks if outputs are missing
           BUILD_DUR=${BUILD_DUR:-0}
           TEST_DUR=${TEST_DUR:-0}
           DEPLOY_DUR=${DEPLOY_DUR:-0}
 
-          LCE=$((100 - BUILD_DUR / 2))
+          # Compute novel metrics
+          LCE=$(( 100 - BUILD_DUR / 2 ))
           if [ "$LCE" -lt 0 ]; then LCE=0; fi
           if [ "$LCE" -gt 100 ]; then LCE=100; fi
+
           PRT=$DEPLOY_DUR
           SMO=1
           DEPT=$DEPLOY_DUR
           CLBC=100
 
+          # Build JSON payload
           cat > payload.json <<EOF
           {
             "source": "github",
@@ -156,15 +202,19 @@ jobs:
           }
           EOF
 
-          echo "Health check..."
-          curl -fsS "$BASE_URL/health" || echo "Health check failed."
+          echo "Payload to send:"
+          cat payload.json
 
+          # Post metrics
           echo "Posting metrics to $BASE_URL/api/metrics/ingest/ ..."
-          HTTP_STATUS=$(curl -sS -o response.txt -w "%{http_code}" \
+          if curl --max-time 15 -sS -o response.txt \
             -X POST "$BASE_URL/api/metrics/ingest/" \
             -H "Content-Type: application/json" \
             -H "X-Bench-Key: $BENCH_API_KEY" \
-            --data @payload.json || true)
-
-          echo "HTTP_STATUS=$HTTP_STATUS"
-          cat response.txt || true
+            --data @payload.json; then
+            echo "Metrics posted successfully"
+            echo "Response:"
+            cat response.txt
+          else
+            echo "::warning:: Metrics ingest failed (deployment continues)"
+          fi
