@@ -117,18 +117,16 @@ def api_metrics_data(request):
     Query params:
     - source: "github", "jenkins", "codepipeline" or empty/invalid for all
 
-    Response example:
+    Response example (shaped for dashboard.html):
 
     {
       "source": "github",
       "count": 10,
-      "avg": {
-        "lce": 75.3,
-        "prt": 5.1,
-        "smo": 1.0,
-        "dept": 42.0,
-        "clbc": 0.8
-      },
+      "avg_lce": 75.3,
+      "avg_prt": 5.1,
+      "avg_smo": 1.0,
+      "avg_dept": 42.0,
+      "avg_clbc": 0.8,
       "rows": [
         {
           "t": "2025-11-10T12:34:56",
@@ -194,13 +192,13 @@ def api_metrics_data(request):
     data = {
         "source": source,
         "count": count,
-        "avg": {
-            "lce": avg(lces),
-            "prt": avg(prts),
-            "smo": avg(smos),
-            "dept": avg(depts),
-            "clbc": avg(clbcs),
-        },
+        # top-level averages for dashboard.html
+        "avg_lce": avg(lces),
+        "avg_prt": avg(prts),
+        "avg_smo": avg(smos),
+        "avg_dept": avg(depts),
+        "avg_clbc": avg(clbcs),
+        # keep rows for the chart
         "rows": rows,
     }
 
