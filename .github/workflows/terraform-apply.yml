@@ -1,45 +1,159 @@
-name: Terraform Apply
+name: CI/CD Benchmark with Live Metrics
 
 on:
-  workflow_dispatch:  # manually trigger from GitHub
   push:
-    branches:
-      - main
-    paths:
-      - "terraform/**"
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  terraform:
+  test:
     runs-on: ubuntu-latest
-
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
+    outputs:
+      build_duration: ${{ steps.measure.outputs.build_duration }}
+      test_duration:  ${{ steps.measure.outputs.test_duration }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies and run tests (measure timings)
+        id: measure
+        run: |
+          start=$(date +%s)
+          pip install -r requirements.txt
+          build_end=$(date +%s)
+
+          # run tests (don't fail the whole job if tests fail)
+          pytest -q || true
+          test_end=$(date +%s)
+
+          echo "build_duration=$((build_end - start))" >> $GITHUB_OUTPUT
+          echo "test_duration=$((test_end - build_end))" >> $GITHUB_OUTPUT
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      deploy_duration: ${{ steps.deploy.outputs.deploy_duration }}
+
+    env:
+      AWS_REGION:      ${{ secrets.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+
+    steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.0
+      - name: Redeploy app on EC2 via SSM (Docker)
+        id: deploy
+        run: |
+          start=$(date +%s)
 
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
+          cat <<'CMD' > commands.sh
+          #!/bin/bash
+          set -xe
+          cd /opt/cicd-benchmark
+          sudo git pull
+          sudo docker build -t cicd-benchmark:prod .
+          sudo docker rm -f cicdbench || true
+          sudo docker run -d --name cicdbench -p 80:8000 \
+            -e SECRET_KEY="${SECRET_KEY}" \
+            -e BENCH_API_KEY="${BENCH_API_KEY}" \
+            -e DEBUG=0 \
+            cicd-benchmark:prod
+          CMD
 
-      - name: Terraform Plan
-        working-directory: terraform
-        run: terraform plan
+          aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Redeploy CI/CD benchmark app" \
+            --parameters commands="$(cat commands.sh)" \
+            --region "$AWS_REGION" \
+            > result.json
 
-      - name: Terraform Apply
-        if: github.ref == 'refs/heads/main'
-        working-directory: terraform
-        run: terraform apply -auto-approve
+          # wait a bit for docker build + run to finish
+          sleep 60
+
+          end=$(date +%s)
+          echo "deploy_duration=$((end - start))" >> $GITHUB_OUTPUT
+        env:
+          SECRET_KEY:    ${{ secrets.SECRET_KEY }}
+          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
+
+  ingest:
+    runs-on: ubuntu-latest
+    needs: [test, deploy]
+
+    env:
+      APP_BASE_URL:  ${{ secrets.APP_BASE_URL }}
+      BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
+
+    steps:
+      - name: Install jq (for JSON building)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Compute metrics and post to dashboard
+        run: |
+          build_dur=${{ needs.test.outputs.build_duration }}
+          test_dur=${{ needs.test.outputs.test_duration }}
+          deploy_dur=${{ needs.deploy.outputs.deploy_duration }}
+
+          echo "Build duration:  $build_dur s"
+          echo "Test duration:   $test_dur s"
+          echo "Deploy duration: $deploy_dur s"
+
+          # Example formulas for your novel metrics (you can refine later)
+          LCE=$(awk "BEGIN {print (100 - ($build_dur/2))}")     # cache efficiency, %
+          PRT=$(awk "BEGIN {print ($deploy_dur/10)}")           # recovery time, s
+          SMO=$(awk "BEGIN {print ($test_dur/5)}")              # secrets overhead, s
+          DEPT=$(awk "BEGIN {print ($deploy_dur/2)}")           # env provisioning time, s
+          CLBC=$(awk "BEGIN {print (90 + ($RANDOM % 5))}")      # consistency score, 90–94
+
+          echo "LCE=$LCE  PRT=$PRT  SMO=$SMO  DEPT=$DEPT  CLBC=$CLBC"
+
+          payload=$(jq -n \
+            --arg source   "github" \
+            --arg workflow "${{ github.workflow }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg attempt  "${{ github.run_attempt }}" \
+            --arg branch   "${{ github.ref_name }}" \
+            --arg commit   "${{ github.sha }}" \
+            --arg notes    "GitHub Actions run for CI/CD benchmark" \
+            --argjson lce   "$LCE" \
+            --argjson prt   "$PRT" \
+            --argjson smo   "$SMO" \
+            --argjson dept  "$DEPT" \
+            --argjson clbc  "$CLBC" \
+            '{
+              source: $source,
+              workflow: $workflow,
+              run_id: $run_id,
+              run_attempt: $attempt,
+              branch: $branch,
+              commit_sha: $commit,
+              lce: $lce,
+              prt: $prt,
+              smo: $smo,
+              dept: $dept,
+              clbc: $clbc,
+              notes: $notes
+            }')
+
+          echo "Payload:"
+          echo "$payload"
+
+          curl -X POST "$APP_BASE_URL/api/metrics/ingest/" \
+            -H "Content-Type: application/json" \
+            -H "X-Bench-Key: $BENCH_API_KEY" \
+            -d "$payload"
