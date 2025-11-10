@@ -65,7 +65,7 @@ jobs:
           echo "Redeploying on EC2 instance: $EC2_INSTANCE_ID"
 
           # Create properly formatted SSM commands
-          cat > ssm-commands.json << 'EOF'
+          cat > ssm-commands.json <<EOF
           {
             "commands": [
               "set -e",
