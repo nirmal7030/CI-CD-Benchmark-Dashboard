@@ -34,8 +34,7 @@ jobs:
           echo "build_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
       # ---- measure test time ----
-      # Note: if you have 0 tests, pytest exits 5. We don't want the job to fail for that,
-      # so we treat "no tests" as OK.
+      # If you have 0 tests, pytest exits 5 – treat that as OK.
       - name: Run tests (timed)
         id: test_step
         run: |
@@ -77,16 +76,24 @@ jobs:
             "commands": [
               "set -e",
               "cd /opt/cicd-benchmark || exit 1",
+
+              "echo '[EC2] Pulling latest code...'",
               "git pull --rebase || true",
+
+              "echo '[EC2] Building image...'",
               "/usr/bin/docker build -t cicd-benchmark:prod .",
-              "/usr/bin/docker rm -f cicdbench || true",
-              "/usr/bin/docker run -d --name cicdbench -p 80:8000 \
-                -e DEBUG=0 \
-                -e SECRET_KEY=$SECRET_KEY \
-                -e ALLOWED_HOSTS=* \
-                -e BENCH_API_KEY=$BENCH_API_KEY \
-                cicd-benchmark:prod",
-              "/usr/bin/docker exec cicdbench python manage.py migrate --noinput"
+
+              "echo '[EC2] Stopping old container (if any)...'",
+              "/usr/bin/docker stop cicdbench || true",
+              "/usr/bin/docker rm cicdbench || true",
+
+              "echo '[EC2] Starting new container...'",
+              "/usr/bin/docker run -d --name cicdbench --restart unless-stopped -p 80:8000 -e DEBUG=0 -e SECRET_KEY=$SECRET_KEY -e ALLOWED_HOSTS=* -e BENCH_API_KEY=$BENCH_API_KEY cicd-benchmark:prod",
+
+              "echo '[EC2] Running migrations...'",
+              "/usr/bin/docker exec cicdbench python manage.py migrate --noinput || { echo 'Migrations failed – keeping container running but marking deploy as failed.'; exit 1; }",
+
+              "echo '[EC2] Deploy complete.'"
             ]
           }
           EOF
