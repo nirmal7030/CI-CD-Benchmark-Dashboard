@@ -118,6 +118,7 @@ jobs:
 
       # ---- POST NOVEL METRICS (LCE, PRT, SMO, DEPT, CLBC) TO DJANGO ----
       - name: Post novel metrics to app
+        continue-on-error: true   # <- don't fail the whole job if app isn't reachable
         env:
           APP_BASE_URL:  ${{ secrets.APP_BASE_URL }}
           BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
@@ -186,10 +187,12 @@ jobs:
           cat payload.json
 
           echo "Health check..."
-          curl -sS "$BASE_URL/health" || echo "Health check failed (but will still attempt ingest)."
+          curl --max-time 5 -fsS "$BASE_URL/health" \
+            || echo "Health check failed (but will still attempt ingest)."
 
           echo "Posting metrics to $BASE_URL/api/metrics/ingest/ ..."
-          curl -v -sS -X POST "$BASE_URL/api/metrics/ingest/" \
+          curl --max-time 5 -fsS -X POST "$BASE_URL/api/metrics/ingest/" \
             -H "Content-Type: application/json" \
             -H "X-Bench-Key: $BENCH_API_KEY" \
-            --data @payload.json
+            --data @payload.json \
+            || echo "Metrics ingest failed (but deployment will continue)."
