@@ -191,8 +191,11 @@ jobs:
             || echo "Health check failed (but will still attempt ingest)."
 
           echo "Posting metrics to $BASE_URL/api/metrics/ingest/ ..."
-          curl --max-time 5 -fsS -X POST "$BASE_URL/api/metrics/ingest/" \
+          curl --max-time 10 -sS -o response.txt -w "\nHTTP_STATUS=%{http_code}\n" \
+            -X POST "$BASE_URL/api/metrics/ingest/" \
             -H "Content-Type: application/json" \
             -H "X-Bench-Key: $BENCH_API_KEY" \
-            --data @payload.json \
-            || echo "Metrics ingest failed (but deployment will continue)."
+            --data @payload.json || echo "Metrics ingest failed (but deployment will continue)."
+
+          echo "Response body:"
+          cat response.txt
