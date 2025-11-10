@@ -55,7 +55,7 @@ jobs:
 
       - name: Install jq (for SSM command JSON)
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y jq
 
       - name: Redeploy app on EC2 via SSM (Docker)
@@ -65,6 +65,13 @@ jobs:
           BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
         run: |
           start=$(date +%s)
+
+          if [ -z "$EC2_INSTANCE_ID" ]; then
+            echo "❌ ERROR: EC2_INSTANCE_ID is empty. Please set the secret correctly."
+            exit 1
+          fi
+
+          echo "Using EC2 instance ID: $EC2_INSTANCE_ID"
 
           # Write the script that will run on EC2
           cat <<CMD > commands.sh
@@ -81,7 +88,7 @@ jobs:
             cicd-benchmark:prod
           CMD
 
-          # Encode the whole script as a single JSON-safe string
+          # Encode script as a JSON-safe string for SSM
           COMMANDS=$(jq -Rs '.' < commands.sh)
 
           aws ssm send-command \
@@ -91,7 +98,7 @@ jobs:
             --parameters "{\"commands\": [$COMMANDS]}" \
             --region "$AWS_REGION"
 
-          # wait a bit for docker build + run to finish
+          # Wait for docker build + run to complete
           sleep 60
 
           end=$(date +%s)
@@ -108,7 +115,7 @@ jobs:
     steps:
       - name: Install jq (for JSON building)
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y jq
 
       - name: Compute metrics and post to dashboard
@@ -121,14 +128,14 @@ jobs:
           echo "Test duration:   $test_dur s"
           echo "Deploy duration: $deploy_dur s"
 
-          # Example formulas for your novel metrics (you can refine later)
+          # Example formulas for your novel metrics (can be tuned later)
           LCE=$(awk "BEGIN {print (100 - ($build_dur/2))}")     # cache efficiency, %
           PRT=$(awk "BEGIN {print ($deploy_dur/10)}")           # recovery time, s
           SMO=$(awk "BEGIN {print ($test_dur/5)}")              # secrets overhead, s
           DEPT=$(awk "BEGIN {print ($deploy_dur/2)}")           # env provisioning time, s
           CLBC=$(awk "BEGIN {print (90 + ($RANDOM % 5))}")      # consistency score, 90–94
 
-          echo "LCE=$LCE  PRT=$PRT  SMO=$SMO  DEPT=$DEPT  CLBC=$CLBC"
+          echo "📈 Metrics → LCE=$LCE  PRT=$PRT  SMO=$SMO  DEPT=$DEPT  CLBC=$CLBC"
 
           payload=$(jq -n \
             --arg source   "github" \
@@ -158,7 +165,7 @@ jobs:
               notes: $notes
             }')
 
-          echo "Payload:"
+          echo "Payload to ingest:"
           echo "$payload"
 
           curl -X POST "$APP_BASE_URL/api/metrics/ingest/" \
