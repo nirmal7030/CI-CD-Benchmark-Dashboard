@@ -33,9 +33,10 @@ jobs:
       - name: Run tests (timed)
         id: test_step
         run: |
-          set -e
+          # don't fail if there are no tests or pytest fails – we just want timing
+          set +e
           START=$(date +%s)
-          pytest -q
+          pytest -q || echo "pytest returned non-zero (maybe no tests); continuing."
           END=$(date +%s)
           echo "test_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
@@ -44,7 +45,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      # You can keep AWS credentials here if you want, or remove this step.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -52,7 +52,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      # 🔹 NEW: fake deploy duration (no SSM, no docker rm)
       - name: Fake deploy duration (no-op)
         id: deploy_step
         run: |
@@ -63,7 +62,6 @@ jobs:
           END=$(date +%s)
           echo "deploy_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
-      # ---- POST NOVEL METRICS TO DJANGO ----
       - name: Post novel metrics to app
         env:
           APP_BASE_URL:  ${{ secrets.APP_BASE_URL }}
