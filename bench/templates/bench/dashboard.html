@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>CI/CD Benchmark Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-card: #151a2c;
+      --bg-card-soft: #191f34;
+      --accent: #4f46e5;
+      --accent-soft: rgba(79, 70, 229, 0.15);
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --border: #1f2937;
+      --ok: #22c55e;
+      --warn: #eab308;
+      --bad: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #111827 0, #020617 55%, #000 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .page {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .title-block h1 {
+      margin: 0 0 4px;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .title-block p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.1);
+      color: #bbf7d0;
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+
+    .badge span:first-child { font-size: 14px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .pill span.key { font-weight: 600; color: var(--text); }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 3.8fr) minmax(0, 2fr); /* left a bit wider */
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    @media (max-width: 900px) {
+      .layout-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .card {
+      background: radial-gradient(circle at top left, rgba(79, 70, 229, 0.14), transparent 60%),
+                  var(--bg-card);
+      border-radius: 14px;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    .card-soft {
+      background: var(--bg-card-soft);
+      border-radius: 14px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .tabs {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 999px;
+      background: #020617;
+      border: 1px solid var(--border);
+    }
+
+    .tab {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .tab span.dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--border);
+    }
+
+    .tab.active {
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    .tab.active span.dot { background: var(--accent); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+      margin-bottom: 10px;
+    }
+
+    @media (max-width: 900px) {
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .metric-card {
+      background: rgba(15, 23, 42, 0.9);
+      border-radius: 12px;
+      padding: 8px 9px;
+      border: 1px solid var(--border);
+      min-height: 70px;
+    }
+
+    .metric-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .metric-sub {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .small-text { font-size: 11px; color: var(--muted); }
+
+    .flex-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn {
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      background: #020617;
+      color: var(--text);
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-outline { background: transparent; }
+
+    .btn:hover { background: #111827; }
+
+    .btn-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+    }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(to right, transparent, #1f2937, transparent);
+      margin: 10px 0;
+    }
+
+    .metrics-info-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .metrics-info-list li span.code {
+      font-weight: 600;
+      color: var(--text);
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #020617;
+      border: 1px solid var(--border);
+      margin-right: 6px;
+    }
+
+    .footer-note {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: right;
+    }
+
+    code {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+    }
+
+    /* NEW: small heading + bands table styles */
+
+    .small-heading {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 10px 0 6px;
+    }
+
+    .bands-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+
+    .bands-table th,
+    .bands-table td {
+      padding: 4px 6px;
+      text-align: left;
+    }
+
+    .bands-table thead {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .bands-table th {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .bands-table td.metric {
+      white-space: nowrap;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 10px;
+      margin-right: 4px;
+    }
+
+    .tag-good {
+      background: rgba(34, 197, 94, 0.1);
+      color: #bbf7d0;
+      border-color: rgba(34, 197, 94, 0.4);
+    }
+
+    .tag-ok {
+      background: rgba(234, 179, 8, 0.08);
+      color: #facc15;
+      border-color: rgba(234, 179, 8, 0.4);
+    }
+
+    .tag-bad {
+      background: rgba(239, 68, 68, 0.08);
+      color: #fecaca;
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+
+    /* Charts layout */
+
+    .charts-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
+      grid-auto-rows: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .charts-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .chart-card {
+      background: rgba(15, 23, 42, 0.9);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 10px 10px 14px;
+    }
+
+    .chart-card.full {
+      grid-column: 1 / -1; /* span both columns for radar chart */
+    }
+
+    .chart-title {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .chart-title span.label {
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .chart-empty {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      padding: 18px 8px;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: 260px !important; /* bigger charts */
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <!-- HEADER -->
+    <header class="header">
+      <div class="title-block">
+        <div class="badge">
+          <span>●</span>
+          <span>Live CI/CD Pipeline Telemetry</span>
+        </div>
+        <h1>CI/CD Benchmark Observatory</h1>
+        <p>
+          Comparative analysis of GitHub Actions, Jenkins, and AWS CodePipeline using
+          novel CI/CD performance metrics.
+        </p>
+      </div>
+      <div>
+        <div class="pill">
+          <span class="key">API:</span>
+          <code>/api/metrics/data/?source=&lt;tool&gt;</code>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout-grid">
+      <!-- LEFT: SUMMARY + CHART ZONE -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2>Pipeline Overview</h2>
+            <p class="small-text" id="summary-subtitle">
+              Select a CI/CD tool to view its aggregate behaviour.
+            </p>
+          </div>
+          <div class="tabs" id="source-tabs">
+            <button class="tab active" data-source="github">
+              <span class="dot"></span>
+              GitHub Actions
+            </button>
+            <button class="tab" data-source="jenkins">
+              <span class="dot"></span>
+              Jenkins
+            </button>
+            <button class="tab" data-source="codepipeline">
+              <span class="dot"></span>
+              AWS CodePipeline
+            </button>
+          </div>
+        </div>
+
+        <!-- Metric cards -->
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="metric-label"><span>LCE</span></div>
+            <div class="metric-value" id="metric-lce">0.0</div>
+            <div class="metric-sub">
+              Higher is better – % of Docker layers served from cache.
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label"><span>PRT</span></div>
+            <div class="metric-value" id="metric-prt">0.0</div>
+            <div class="metric-sub">
+              Lower is better – time to move from failing run to stable state (s).
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label"><span>SMO</span></div>
+            <div class="metric-value" id="metric-smo">0.0</div>
+            <div class="metric-sub">
+              Lower is better – latency added by secrets handling (s).
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label"><span>DEPT</span></div>
+            <div class="metric-value" id="metric-dept">0.0</div>
+            <div class="metric-sub">
+              Lower is better – Terraform / infra spin-up & tear-down time (s).
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label"><span>CLBC</span></div>
+            <div class="metric-value" id="metric-clbc">0.0</div>
+            <div class="metric-sub">
+              Higher is better – consistency of image layers across runs/tools.
+            </div>
+          </div>
+        </div>
+
+        <div class="flex-row">
+          <span class="small-text">
+            <span id="run-count">0</span> runs ingested for
+            <span id="current-source-label">GitHub Actions</span>.
+          </span>
+          <div>
+            <button class="btn btn-outline" id="btn-download-json">
+              <span class="btn-icon"></span>
+              Download JSON snapshot
+            </button>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+          <div class="chart-card">
+            <div class="chart-title">
+              <span class="label">Time-series (per run)</span>
+              <span class="small-text">Line chart – one colour per metric</span>
+            </div>
+            <div id="line-empty" class="chart-empty" style="display: none;">
+              No runs yet for this source – trigger a pipeline to see the time-series.
+            </div>
+            <canvas id="metricsLineChart"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-title">
+              <span class="label">Average metrics</span>
+              <span class="small-text">Bar chart of LCE, PRT, SMO, DEPT, CLBC</span>
+            </div>
+            <div id="bar-empty" class="chart-empty" style="display: none;">
+              No runs yet for this source – averages will appear once data is ingested.
+            </div>
+            <canvas id="metricsBarChart"></canvas>
+          </div>
+
+          <div class="chart-card full">
+            <div class="chart-title">
+              <span class="label">Metric profile</span>
+              <span class="small-text">Radar chart – relative shape across all 5 metrics</span>
+            </div>
+            <div id="radar-empty" class="chart-empty" style="display: none;">
+              No runs yet – radar profile will appear once averages are available.
+            </div>
+            <canvas id="metricsRadarChart"></canvas>
+          </div>
+        </div>
+
+        <div class="footer-note">
+          Data source: Metrics ingested from your CI/CD pipelines via
+          <code>/api/metrics/ingest/</code>.
+        </div>
+      </section>
+
+      <!-- RIGHT: METRIC DEFINITIONS / CONTEXT + INTERPRETATION BANDS -->
+      <aside class="card-soft">
+        <div class="card-header">
+          <h2>Novel CI/CD Metrics</h2>
+        </div>
+        <p class="small-text">
+          Concise definitions used in the evaluation. Longer discussion appears in the dissertation.
+        </p>
+
+        <div class="divider"></div>
+
+        <ul class="metrics-info-list">
+          <li>
+            <span class="code">LCE – Layer Cache Efficiency</span>
+            Share of Docker layers served from cache across runs; approximates how cache-friendly a
+            pipeline is.
+          </li>
+          <li>
+            <span class="code">PRT – Pipeline Recovery Time</span>
+            Time needed to go from a failing pipeline state back to a stable green run.
+          </li>
+          <li>
+            <span class="code">SMO – Secrets Management Overhead</span>
+            Extra latency introduced by fetching, decrypting and injecting secrets into jobs.
+          </li>
+          <li>
+            <span class="code">DEPT – Dynamic Environment Provisioning Time</span>
+            Duration of Terraform / cloud API calls that create or destroy ephemeral environments.
+          </li>
+          <li>
+            <span class="code">CLBC – Cross-Layer Build Consistency</span>
+            Score describing how similar Docker image layers remain across runs and tools
+            (reproducibility).
+          </li>
+        </ul>
+
+        <div class="divider"></div>
+
+        <div class="small-heading">Quick interpretation bands</div>
+        <p class="small-text" style="margin-bottom:4px;">
+          Indicative ranges for this study. Thresholds can be tuned in the dissertation.
+        </p>
+
+        <table class="bands-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Good</th>
+              <th>Acceptable</th>
+              <th>Needs attention</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="metric">LCE</td>
+              <td><span class="tag tag-good">&gt; 80%</span></td>
+              <td><span class="tag tag-ok">50–80%</span></td>
+              <td><span class="tag tag-bad">&lt; 50%</span></td>
+            </tr>
+            <tr>
+              <td class="metric">PRT</td>
+              <td><span class="tag tag-good">&lt; 60s</span></td>
+              <td><span class="tag tag-ok">60–300s</span></td>
+              <td><span class="tag tag-bad">&gt; 300s</span></td>
+            </tr>
+            <tr>
+              <td class="metric">SMO</td>
+              <td><span class="tag tag-good">&lt; 2s</span></td>
+              <td><span class="tag tag-ok">2–5s</span></td>
+              <td><span class="tag tag-bad">&gt; 5s</span></td>
+            </tr>
+            <tr>
+              <td class="metric">DEPT</td>
+              <td><span class="tag tag-good">&lt; 60s</span></td>
+              <td><span class="tag tag-ok">60–300s</span></td>
+              <td><span class="tag tag-bad">&gt; 300s</span></td>
+            </tr>
+            <tr>
+              <td class="metric">CLBC</td>
+              <td><span class="tag tag-good">&gt; 0.8</span></td>
+              <td><span class="tag tag-ok">0.5–0.8</span></td>
+              <td><span class="tag tag-bad">&lt; 0.5</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // --- DOM references ---
+    const tabs = document.querySelectorAll("#source-tabs .tab");
+    const lceEl = document.getElementById("metric-lce");
+    const prtEl = document.getElementById("metric-prt");
+    const smoEl = document.getElementById("metric-smo");
+    const deptEl = document.getElementById("metric-dept");
+    const clbcEl = document.getElementById("metric-clbc");
+    const runCountEl = document.getElementById("run-count");
+    const sourceLabelEl = document.getElementById("current-source-label");
+    const downloadBtn = document.getElementById("btn-download-json");
+    const summarySubtitle = document.getElementById("summary-subtitle");
+
+    const lineEmpty = document.getElementById("line-empty");
+    const barEmpty = document.getElementById("bar-empty");
+    const radarEmpty = document.getElementById("radar-empty");
+
+    const lineCtx = document.getElementById("metricsLineChart").getContext("2d");
+    const barCtx = document.getElementById("metricsBarChart").getContext("2d");
+    const radarCtx = document.getElementById("metricsRadarChart").getContext("2d");
+
+    let lineChart = null;
+    let barChart = null;
+    let radarChart = null;
+
+    const SOURCE_LABELS = {
+      github: "GitHub Actions",
+      jenkins: "Jenkins",
+      codepipeline: "AWS CodePipeline",
+      all: "All Pipelines",
+    };
+
+    // Distinct colours for each metric
+    const COLORS = {
+      lce: "#22c55e",   // green
+      prt: "#ef4444",   // red
+      smo: "#eab308",   // amber
+      dept: "#3b82f6",  // blue
+      clbc: "#8b5cf6",  // violet
+    };
+
+    async function fetchMetrics(source) {
+      try {
+        const param = source ? `?source=${encodeURIComponent(source)}` : "";
+        const resp = await fetch(`/api/metrics/data/${param}`);
+        if (!resp.ok) {
+          console.error("Failed to load metrics", resp.status);
+          return null;
+        }
+        return await resp.json();
+      } catch (err) {
+        console.error("Error calling /api/metrics/data/", err);
+        return null;
+      }
+    }
+
+    function formatNumber(num) {
+      if (num === null || num === undefined || isNaN(num)) return "0.0";
+      return Number(num).toFixed(1);
+    }
+
+    function updateMetricCards(data) {
+      if (!data) return;
+      const avg = data.avg || {};
+
+      lceEl.textContent = formatNumber(avg.lce);
+      prtEl.textContent = formatNumber(avg.prt);
+      smoEl.textContent = formatNumber(avg.smo);
+      deptEl.textContent = formatNumber(avg.dept);
+      clbcEl.textContent = formatNumber(avg.clbc);
+
+      runCountEl.textContent = data.count ?? 0;
+
+      const srcKey = data.source || "all";
+      sourceLabelEl.textContent = SOURCE_LABELS[srcKey] || srcKey;
+
+      if (data.count === 0) {
+        summarySubtitle.textContent =
+          "No runs ingested yet for this CI/CD source. Trigger a pipeline to populate metrics.";
+      } else {
+        summarySubtitle.textContent =
+          "Averages computed from the most recent " +
+          data.count +
+          " runs for the selected CI/CD tool.";
+      }
+    }
+
+    function buildLineChart(data) {
+      const rows = data.rows || [];
+      if (!rows.length) {
+        if (lineChart) {
+          lineChart.destroy();
+          lineChart = null;
+        }
+        lineEmpty.style.display = "block";
+        return;
+      }
+      lineEmpty.style.display = "none";
+
+      const labels = rows.map((r) => {
+        const d = new Date(r.t);
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      });
+
+      const datasets = [
+        {
+          label: "LCE",
+          data: rows.map((r) => r.lce),
+          borderColor: COLORS.lce,
+          backgroundColor: "rgba(34,197,94,0.15)",
+          tension: 0.25,
+          fill: false,
+        },
+        {
+          label: "PRT",
+          data: rows.map((r) => r.prt),
+          borderColor: COLORS.prt,
+          backgroundColor: "rgba(239,68,68,0.15)",
+          tension: 0.25,
+          fill: false,
+        },
+        {
+          label: "SMO",
+          data: rows.map((r) => r.smo),
+          borderColor: COLORS.smo,
+          backgroundColor: "rgba(234,179,8,0.15)",
+          tension: 0.25,
+          fill: false,
+        },
+        {
+          label: "DEPT",
+          data: rows.map((r) => r.dept),
+          borderColor: COLORS.dept,
+          backgroundColor: "rgba(59,130,246,0.15)",
+          tension: 0.25,
+          fill: false,
+        },
+        {
+          label: "CLBC",
+          data: rows.map((r) => r.clbc),
+          borderColor: COLORS.clbc,
+          backgroundColor: "rgba(139,92,246,0.15)",
+          tension: 0.25,
+          fill: false,
+        },
+      ];
+
+      if (lineChart) {
+        lineChart.data.labels = labels;
+        lineChart.data.datasets = datasets;
+        lineChart.update();
+        return;
+      }
+
+      lineChart = new Chart(lineCtx, {
+        type: "line",
+        data: { labels, datasets },
+        options: {
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: "#e5e7eb", font: { size: 10 } },
+            },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#9ca3af", font: { size: 9 } },
+              grid: { color: "rgba(55, 65, 81, 0.4)" },
+            },
+            y: {
+              ticks: { color: "#9ca3af", font: { size: 9 } },
+              grid: { color: "rgba(55, 65, 81, 0.4)" },
+            },
+          },
+        },
+      });
+    }
+
+    function buildBarChart(data) {
+      const count = data.count || 0;
+      const avg = data.avg || {};
+
+      if (!count) {
+        if (barChart) {
+          barChart.destroy();
+          barChart = null;
+        }
+        barEmpty.style.display = "block";
+        return;
+      }
+      barEmpty.style.display = "none";
+
+      const labels = ["LCE", "PRT", "SMO", "DEPT", "CLBC"];
+      const values = [
+        avg.lce || 0,
+        avg.prt || 0,
+        avg.smo || 0,
+        avg.dept || 0,
+        avg.clbc || 0,
+      ];
+      const colors = [
+        COLORS.lce,
+        COLORS.prt,
+        COLORS.smo,
+        COLORS.dept,
+        COLORS.clbc,
+      ];
+
+      if (barChart) {
+        barChart.data.labels = labels;
+        barChart.data.datasets[0].data = values;
+        barChart.update();
+        return;
+      }
+
+      barChart = new Chart(barCtx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Average value",
+              data: values,
+              backgroundColor: colors.map((c) => c + "cc"),
+              borderColor: colors,
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#9ca3af", font: { size: 9 } },
+              grid: { display: false },
+            },
+            y: {
+              ticks: { color: "#9ca3af", font: { size: 9 } },
+              grid: { color: "rgba(55, 65, 81, 0.4)" },
+            },
+          },
+        },
+      });
+    }
+
+    function buildRadarChart(data) {
+      const count = data.count || 0;
+      const avg = data.avg || {};
+
+      if (!count) {
+        if (radarChart) {
+          radarChart.destroy();
+          radarChart = null;
+        }
+        radarEmpty.style.display = "block";
+        return;
+      }
+      radarEmpty.style.display = "none";
+
+      const labels = ["LCE", "PRT", "SMO", "DEPT", "CLBC"];
+      const values = [
+        avg.lce || 0,
+        avg.prt || 0,
+        avg.smo || 0,
+        avg.dept || 0,
+        avg.clbc || 0,
+      ];
+
+      if (radarChart) {
+        radarChart.data.labels = labels;
+        radarChart.data.datasets[0].data = values;
+        radarChart.update();
+        return;
+      }
+
+      radarChart = new Chart(radarCtx, {
+        type: "radar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Metric profile",
+              data: values,
+              backgroundColor: "rgba(79,70,229,0.25)",
+              borderColor: "#4f46e5",
+              pointBackgroundColor: [
+                COLORS.lce,
+                COLORS.prt,
+                COLORS.smo,
+                COLORS.dept,
+                COLORS.clbc,
+              ],
+              borderWidth: 2,
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: "#e5e7eb", font: { size: 10 } },
+            },
+          },
+          scales: {
+            r: {
+              angleLines: { color: "rgba(55,65,81,0.5)" },
+              grid: { color: "rgba(55,65,81,0.5)" },
+              pointLabels: { color: "#e5e7eb", font: { size: 10 } },
+              ticks: {
+                display: true,
+                color: "#6b7280",
+                backdropColor: "transparent",
+                font: { size: 8 },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    function updateCharts(data) {
+      if (!data) {
+        lineEmpty.style.display = "block";
+        barEmpty.style.display = "block";
+        radarEmpty.style.display = "block";
+        return;
+      }
+      buildLineChart(data);
+      buildBarChart(data);
+      buildRadarChart(data);
+    }
+
+    async function loadForSource(source) {
+      const data = await fetchMetrics(source);
+      window.__latestMetricsData = data; // store for download
+      updateMetricCards(data);
+      updateCharts(data);
+    }
+
+    // Tab behaviour
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        const source = tab.getAttribute("data-source");
+        loadForSource(source);
+      });
+    });
+
+    // Download JSON snapshot
+    downloadBtn.addEventListener("click", () => {
+      const data = window.__latestMetricsData || null;
+      if (!data) {
+        alert("No data loaded yet. Please wait for metrics to load.");
+        return;
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const srcKey = data.source || "all";
+      a.href = url;
+      a.download = `cicd-metrics-${srcKey}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    // Initial load: GitHub Actions
+    loadForSource("github");
+  </script>
+</body>
+</html>

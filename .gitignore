@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+.venv/
+*.log
+
+# Django static files
+staticfiles/
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate*
+terraform/*.backup
+
+# IDE and system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
