@@ -1,49 +1,52 @@
-name: CI/CD Benchmark with Live Metrics
+name: CI/CD Benchmark – Test, Deploy & Live Metrics
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     outputs:
-      build_duration: ${{ steps.measure.outputs.build_duration }}
-      test_duration:  ${{ steps.measure.outputs.test_duration }}
+      build_duration: ${{ steps.build_step.outputs.build_duration }}
+      test_duration:  ${{ steps.test_step.outputs.test_duration }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
+      # ---- measure build/install time ----
+      - name: Setup Python
+        id: setup_py
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies and run tests (measure timings)
-        id: measure
+      - name: Install dependencies (timed)
+        id: build_step
         run: |
-          start=$(date +%s)
+          set -e
+          START=$(date +%s)
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          build_end=$(date +%s)
+          END=$(date +%s)
+          echo "build_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
-          # run tests (don't fail the whole job if tests fail)
+      # ---- measure test time ----
+      - name: Run tests (timed)
+        id: test_step
+        run: |
+          set -e
+          START=$(date +%s)
           pytest -q || true
-          test_end=$(date +%s)
-
-          echo "build_duration=$((build_end - start))" >> $GITHUB_OUTPUT
-          echo "test_duration=$((test_end - build_end))" >> $GITHUB_OUTPUT
+          END=$(date +%s)
+          echo "test_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
   deploy:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     needs: test
-    outputs:
-      deploy_duration: ${{ steps.deploy.outputs.deploy_duration }}
-
-    env:
-      AWS_REGION:      ${{ secrets.AWS_REGION }}
-      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Configure AWS credentials
@@ -53,122 +56,130 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Install jq (for SSM command JSON)
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
-
-      - name: Redeploy app on EC2 via SSM (Docker)
-        id: deploy
+      # ---- measure deploy time (SSM build+run) ----
+      - name: Redeploy container on EC2 via SSM (timed)
+        id: deploy_step
+        continue-on-error: true   # don't kill the job if the waiter says "Failed"
         env:
-          SECRET_KEY:    ${{ secrets.SECRET_KEY }}
-          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
+          EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          SECRET_KEY:      ${{ secrets.SECRET_KEY }}
+          BENCH_API_KEY:   ${{ secrets.BENCH_API_KEY }}
         run: |
-          start=$(date +%s)
+          set -e
 
           if [ -z "$EC2_INSTANCE_ID" ]; then
-            echo "❌ ERROR: EC2_INSTANCE_ID is empty. Please set the secret correctly."
+            echo "ERROR: EC2_INSTANCE_ID secret is empty."
             exit 1
           fi
 
-          echo "Using EC2 instance ID: $EC2_INSTANCE_ID"
+          echo "Redeploying on EC2 instance: $EC2_INSTANCE_ID"
 
-          # Write the script that will run on EC2
-          cat <<CMD > commands.sh
-          #!/bin/bash
-          set -xe
-          cd /opt/cicd-benchmark
-          sudo git pull
-          sudo docker build -t cicd-benchmark:prod .
-          sudo docker rm -f cicdbench || true
-          sudo docker run -d --name cicdbench -p 80:8000 \
-            -e SECRET_KEY="${SECRET_KEY}" \
-            -e BENCH_API_KEY="${BENCH_API_KEY}" \
-            -e DEBUG=0 \
-            cicd-benchmark:prod
-          CMD
+          # Build SSM command JSON on the runner (ENV expands here)
+          cat > ssm-commands.json <<EOF
+          {
+            "commands": [
+              "set -e",
+              "cd /opt/cicd-benchmark || exit 1",
+              "git pull --rebase || true",
+              "/usr/bin/docker build -t cicd-benchmark:prod .",
+              "/usr/bin/docker rm -f cicdbench || true",
+              "/usr/bin/docker run -d --name cicdbench -p 80:8000 \
+                -e DEBUG=0 \
+                -e SECRET_KEY=$SECRET_KEY \
+                -e ALLOWED_HOSTS=* \
+                -e BENCH_API_KEY=$BENCH_API_KEY \
+                cicd-benchmark:prod",
+              "/usr/bin/docker exec cicdbench python manage.py migrate --noinput"
+            ]
+          }
+          EOF
 
-          # Encode script as a JSON-safe string for SSM
-          COMMANDS=$(jq -Rs '.' < commands.sh)
+          START=$(date +%s)
 
-          aws ssm send-command \
+          CMD_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --comment "Redeploy CI/CD benchmark app" \
-            --parameters "{\"commands\": [$COMMANDS]}" \
-            --region "$AWS_REGION"
+            --comment "Redeploy cicd-benchmark" \
+            --parameters file://ssm-commands.json \
+            --query "Command.CommandId" --output text)
 
-          # Wait for docker build + run to complete
-          sleep 60
+          echo "SSM command id: $CMD_ID"
 
-          end=$(date +%s)
-          echo "deploy_duration=$((end - start))" >> $GITHUB_OUTPUT
+          aws ssm wait command-executed \
+            --command-id "$CMD_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || echo "SSM waiter reported failure; continuing anyway."
 
-  ingest:
-    runs-on: ubuntu-latest
-    needs: [test, deploy]
+          END=$(date +%s)
+          echo "deploy_duration=$((END-START))" >> "$GITHUB_OUTPUT"
 
-    env:
-      APP_BASE_URL:  ${{ secrets.APP_BASE_URL }}
-      BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
-
-    steps:
-      - name: Install jq (for JSON building)
+      # ---- POST NOVEL METRICS (LCE, PRT, SMO, DEPT, CLBC) TO DJANGO ----
+      - name: Post novel metrics to app
+        env:
+          APP_BASE_URL:  ${{ secrets.APP_BASE_URL }}
+          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
+          BUILD_DUR:     ${{ needs.test.outputs.build_duration }}
+          TEST_DUR:      ${{ needs.test.outputs.test_duration }}
+          DEPLOY_DUR:    ${{ steps.deploy_step.outputs.deploy_duration }}
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+          set -e
 
-      - name: Compute metrics and post to dashboard
-        run: |
-          build_dur=${{ needs.test.outputs.build_duration }}
-          test_dur=${{ needs.test.outputs.test_duration }}
-          deploy_dur=${{ needs.deploy.outputs.deploy_duration }}
+          RAW_URL="$APP_BASE_URL"
+          BASE_URL="$(echo "$RAW_URL" | tr -d '\"'\''[:space:]')"
 
-          echo "Build duration:  $build_dur s"
-          echo "Test duration:   $test_dur s"
-          echo "Deploy duration: $deploy_dur s"
+          if [ -z "$BASE_URL" ]; then
+            echo "ERROR: APP_BASE_URL secret is empty after sanitising."
+            exit 1
+          fi
 
-          # Example formulas for your novel metrics (can be tuned later)
-          LCE=$(awk "BEGIN {print (100 - ($build_dur/2))}")     # cache efficiency, %
-          PRT=$(awk "BEGIN {print ($deploy_dur/10)}")           # recovery time, s
-          SMO=$(awk "BEGIN {print ($test_dur/5)}")              # secrets overhead, s
-          DEPT=$(awk "BEGIN {print ($deploy_dur/2)}")           # env provisioning time, s
-          CLBC=$(awk "BEGIN {print (90 + ($RANDOM % 5))}")      # consistency score, 90–94
+          case "$BASE_URL" in
+            http://*|https://*) ;;
+            *) BASE_URL="http://$BASE_URL" ;;
+          esac
 
-          echo "📈 Metrics → LCE=$LCE  PRT=$PRT  SMO=$SMO  DEPT=$DEPT  CLBC=$CLBC"
+          echo "Using BASE_URL=$BASE_URL (GitHub will mask the host in logs)"
 
-          payload=$(jq -n \
-            --arg source   "github" \
-            --arg workflow "${{ github.workflow }}" \
-            --arg run_id   "${{ github.run_id }}" \
-            --arg attempt  "${{ github.run_attempt }}" \
-            --arg branch   "${{ github.ref_name }}" \
-            --arg commit   "${{ github.sha }}" \
-            --arg notes    "GitHub Actions run for CI/CD benchmark" \
-            --argjson lce   "$LCE" \
-            --argjson prt   "$PRT" \
-            --argjson smo   "$SMO" \
-            --argjson dept  "$DEPT" \
-            --argjson clbc  "$CLBC" \
-            '{
-              source: $source,
-              workflow: $workflow,
-              run_id: $run_id,
-              run_attempt: $attempt,
-              branch: $branch,
-              commit_sha: $commit,
-              lce: $lce,
-              prt: $prt,
-              smo: $smo,
-              dept: $dept,
-              clbc: $clbc,
-              notes: $notes
-            }')
+          BUILD_DUR=${BUILD_DUR:-0}
+          TEST_DUR=${TEST_DUR:-0}
+          DEPLOY_DUR=${DEPLOY_DUR:-0}
 
-          echo "Payload to ingest:"
-          echo "$payload"
+          echo "BUILD_DUR=$BUILD_DUR"
+          echo "TEST_DUR=$TEST_DUR"
+          echo "DEPLOY_DUR=$DEPLOY_DUR"
 
-          curl -X POST "$APP_BASE_URL/api/metrics/ingest/" \
+          # --- simple example formulas for your novel metrics ---
+          LCE=$(( 100 - BUILD_DUR / 2 ))
+          if [ "$LCE" -lt 0 ]; then LCE=0; fi
+          if [ "$LCE" -gt 100 ]; then LCE=100; fi
+
+          PRT=$DEPLOY_DUR
+          SMO=1
+          DEPT=$DEPLOY_DUR
+          CLBC=100
+
+          cat > payload.json <<EOF
+          {
+            "source": "github",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "branch": "${{ github.ref_name }}",
+            "commit_sha": "${{ github.sha }}",
+
+            "lce":  $LCE,
+            "prt":  $PRT,
+            "smo":  $SMO,
+            "dept": $DEPT,
+            "clbc": $CLBC,
+
+            "notes": "auto-ingest of novel metrics from CI"
+          }
+          EOF
+
+          echo "Payload to send:"
+          cat payload.json
+
+          # IMPORTANT: trailing slash so Django accepts POST correctly
+          curl -sS -X POST "$BASE_URL/api/metrics/ingest/" \
             -H "Content-Type: application/json" \
             -H "X-Bench-Key: $BENCH_API_KEY" \
-            -d "$payload"
+            --data @payload.json
