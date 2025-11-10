@@ -53,12 +53,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
+      - name: Install jq (for SSM command JSON)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Redeploy app on EC2 via SSM (Docker)
         id: deploy
+        env:
+          SECRET_KEY:    ${{ secrets.SECRET_KEY }}
+          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
         run: |
           start=$(date +%s)
 
-          cat <<'CMD' > commands.sh
+          # Write the script that will run on EC2
+          cat <<CMD > commands.sh
           #!/bin/bash
           set -xe
           cd /opt/cicd-benchmark
@@ -72,22 +81,21 @@ jobs:
             cicd-benchmark:prod
           CMD
 
+          # Encode the whole script as a single JSON-safe string
+          COMMANDS=$(jq -Rs '.' < commands.sh)
+
           aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Redeploy CI/CD benchmark app" \
-            --parameters commands="$(cat commands.sh)" \
-            --region "$AWS_REGION" \
-            > result.json
+            --parameters "{\"commands\": [$COMMANDS]}" \
+            --region "$AWS_REGION"
 
           # wait a bit for docker build + run to finish
           sleep 60
 
           end=$(date +%s)
           echo "deploy_duration=$((end - start))" >> $GITHUB_OUTPUT
-        env:
-          SECRET_KEY:    ${{ secrets.SECRET_KEY }}
-          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
 
   ingest:
     runs-on: ubuntu-latest
