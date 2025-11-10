@@ -145,6 +145,13 @@ jobs:
         run: |
           set -e
 
+          # Quick debug: make sure BENCH_API_KEY is actually present
+          if [ -z "$BENCH_API_KEY" ]; then
+            echo "ERROR: BENCH_API_KEY is empty in GitHub Secrets. Set it to the exact value of settings.BENCH_API_KEY in Django."
+            exit 1
+          fi
+          echo "BENCH_API_KEY appears to be set (length ${#BENCH_API_KEY})."
+
           # 1) Normalise the base URL from the secret
           RAW_URL="$APP_BASE_URL"
           BASE_URL="$(echo "$RAW_URL" | tr -d '\"'\''[:space:]')"
