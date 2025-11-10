@@ -5,7 +5,7 @@ urlpatterns = [
     # Dashboard (HTML)
     path("", views.dashboard, name="dashboard"),
 
-    # API endpoints (NO trailing slashes to match CI + dashboard JS)
+    # API endpoints – NO trailing slash, to match CI and JS calls
     path("api/metrics/ingest", views.api_ingest, name="api_ingest"),
     path("api/metrics/data", views.api_metrics_data, name="api_metrics_data"),
 ]
