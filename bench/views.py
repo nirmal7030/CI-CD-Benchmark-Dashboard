@@ -1,9 +1,13 @@
 import json
 import statistics
+from pathlib import Path
 
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseBadRequest
-from django.shortcuts import render
+from django.http import (
+    JsonResponse,
+    HttpResponse,
+    HttpResponseBadRequest,
+)
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import Metric
@@ -11,37 +15,43 @@ from .models import Metric
 
 def dashboard(request):
     """
-    Main dashboard page.
-    The HTML shell; charts fetch data from /api/metrics/data via JS.
+    Main dashboard page – serve the static HTML directly.
+
+    This avoids any TemplateDoesNotExist / TemplateSyntaxError problems
+    while you iterate on dashboard.html.
     """
-    return render(request, "bench/dashboard.html")
+    template_path = (
+        Path(settings.BASE_DIR)
+        / "bench"
+        / "templates"
+        / "bench"
+        / "dashboard.html"
+    )
+
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except FileNotFoundError:
+        return HttpResponse(
+            f"Dashboard template not found at {template_path}",
+            status=500,
+            content_type="text/plain",
+        )
+    except Exception as exc:
+        # If anything else goes wrong, show a simple error instead of a blank 500 page
+        return HttpResponse(
+            f"Error loading dashboard: {exc}",
+            status=500,
+            content_type="text/plain",
+        )
+
+    return HttpResponse(html)
 
 
 @csrf_exempt
 def api_ingest(request):
     """
     Ingest endpoint for CI/CD tools.
-
-    Expected:
-    - Method: POST
-    - Header: X-Bench-Key: <BENCH_API_KEY>
-    - Body (JSON), e.g.:
-
-      {
-        "source": "github",
-        "workflow": "CI",
-        "run_id": "12345",
-        "run_attempt": "1",
-        "branch": "main",
-        "commit_sha": "abc123",
-
-        "lce": 80.5,
-        "prt": 0.0,
-        "smo": 1.2,
-        "dept": 45.0,
-        "clbc": 1.0,
-        "notes": "clean build"
-      }
     """
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
@@ -113,38 +123,11 @@ def api_ingest(request):
 def api_metrics_data(request):
     """
     Returns recent metrics and aggregates for a given source.
-
-    Query params:
-    - source: "github", "jenkins", "codepipeline" or empty/invalid for all
-
-    Response example (shaped for dashboard.html):
-
-    {
-      "source": "github",
-      "count": 10,
-      "avg_lce": 75.3,
-      "avg_prt": 5.1,
-      "avg_smo": 1.0,
-      "avg_dept": 42.0,
-      "avg_clbc": 0.8,
-      "rows": [
-        {
-          "t": "2025-11-10T12:34:56",
-          "lce": 80.0,
-          "prt": 0.0,
-          "smo": 1.2,
-          "dept": 40.0,
-          "clbc": 1.0
-        },
-        ...
-      ]
-    }
     """
     source = request.GET.get("source")
 
     qs = Metric.objects.all()
 
-    # Filter by source if provided and valid
     valid_sources = {
         Metric.SOURCE_GITHUB,
         Metric.SOURCE_JENKINS,
@@ -153,13 +136,9 @@ def api_metrics_data(request):
     if source in valid_sources:
         qs = qs.filter(source=source)
     else:
-        # if source is invalid or empty, we treat it as "all sources"
         source = "all"
 
-    # Limit to last 100 entries (newest first)
     qs = qs.order_by("-created_at")[:100]
-
-    # Evaluate once, then reverse for chronological order in charts
     metrics = list(qs)
     metrics.reverse()  # oldest first
 
@@ -192,13 +171,12 @@ def api_metrics_data(request):
     data = {
         "source": source,
         "count": count,
-        # top-level averages for dashboard.html
+        # keep old top-level keys for compatibility
         "avg_lce": avg(lces),
         "avg_prt": avg(prts),
         "avg_smo": avg(smos),
         "avg_dept": avg(depts),
         "avg_clbc": avg(clbcs),
-        # keep rows for the chart
         "rows": rows,
     }
 
