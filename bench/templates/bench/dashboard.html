@@ -87,7 +87,7 @@
 
     .layout-grid {
       display: grid;
-      grid-template-columns: minmax(0, 3.8fr) minmax(0, 2fr); /* left a bit wider */
+      grid-template-columns: minmax(0, 3.8fr) minmax(0, 2fr);
       gap: 20px;
       align-items: flex-start;
     }
@@ -279,8 +279,6 @@
       font-size: 11px;
     }
 
-    /* NEW: small heading + bands table styles */
-
     .small-heading {
       font-size: 12px;
       font-weight: 600;
@@ -344,8 +342,6 @@
       border-color: rgba(239, 68, 68, 0.4);
     }
 
-    /* Charts layout */
-
     .charts-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
@@ -368,7 +364,7 @@
     }
 
     .chart-card.full {
-      grid-column: 1 / -1; /* span both columns for radar chart */
+      grid-column: 1 / -1;
     }
 
     .chart-title {
@@ -395,13 +391,12 @@
 
     canvas {
       width: 100% !important;
-      height: 260px !important; /* bigger charts */
+      height: 260px !important;
     }
   </style>
 </head>
 <body>
   <div class="page">
-    <!-- HEADER -->
     <header class="header">
       <div class="title-block">
         <div class="badge">
@@ -423,7 +418,6 @@
     </header>
 
     <div class="layout-grid">
-      <!-- LEFT: SUMMARY + CHART ZONE -->
       <section class="card">
         <div class="card-header">
           <div>
@@ -448,7 +442,6 @@
           </div>
         </div>
 
-        <!-- Metric cards -->
         <div class="metric-grid">
           <div class="metric-card">
             <div class="metric-label"><span>LCE</span></div>
@@ -504,7 +497,6 @@
           </div>
         </div>
 
-        <!-- Charts -->
         <div class="charts-grid">
           <div class="chart-card">
             <div class="chart-title">
@@ -546,7 +538,6 @@
         </div>
       </section>
 
-      <!-- RIGHT: METRIC DEFINITIONS / CONTEXT + INTERPRETATION BANDS -->
       <aside class="card-soft">
         <div class="card-header">
           <h2>Novel CI/CD Metrics</h2>
@@ -635,7 +626,6 @@
     </div>
   </div>
 
-  <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
@@ -670,13 +660,12 @@
       all: "All Pipelines",
     };
 
-    // Distinct colours for each metric
     const COLORS = {
-      lce: "#22c55e",   // green
-      prt: "#ef4444",   // red
-      smo: "#eab308",   // amber
-      dept: "#3b82f6",  // blue
-      clbc: "#8b5cf6",  // violet
+      lce: "#22c55e",
+      prt: "#ef4444",
+      smo: "#eab308",
+      dept: "#3b82f6",
+      clbc: "#8b5cf6",
     };
 
     async function fetchMetrics(source) {
@@ -699,9 +688,25 @@
       return Number(num).toFixed(1);
     }
 
+    function extractAverages(data) {
+      // Support BOTH shapes:
+      // 1) data.avg_lce / avg_prt / ... (your current backend)
+      // 2) data.avg = { lce, prt, ... } (future-friendly)
+      const avgRaw = data.avg || {};
+
+      return {
+        lce: avgRaw.lce ?? data.avg_lce ?? 0,
+        prt: avgRaw.prt ?? data.avg_prt ?? 0,
+        smo: avgRaw.smo ?? data.avg_smo ?? 0,
+        dept: avgRaw.dept ?? data.avg_dept ?? 0,
+        clbc: avgRaw.clbc ?? data.avg_clbc ?? 0,
+      };
+    }
+
     function updateMetricCards(data) {
       if (!data) return;
-      const avg = data.avg || {};
+
+      const avg = extractAverages(data);
 
       lceEl.textContent = formatNumber(avg.lce);
       prtEl.textContent = formatNumber(avg.prt);
@@ -709,18 +714,19 @@
       deptEl.textContent = formatNumber(avg.dept);
       clbcEl.textContent = formatNumber(avg.clbc);
 
-      runCountEl.textContent = data.count ?? 0;
+      const count = data.count ?? 0;
+      runCountEl.textContent = count;
 
       const srcKey = data.source || "all";
       sourceLabelEl.textContent = SOURCE_LABELS[srcKey] || srcKey;
 
-      if (data.count === 0) {
+      if (count === 0) {
         summarySubtitle.textContent =
           "No runs ingested yet for this CI/CD source. Trigger a pipeline to populate metrics.";
       } else {
         summarySubtitle.textContent =
           "Averages computed from the most recent " +
-          data.count +
+          count +
           " runs for the selected CI/CD tool.";
       }
     }
@@ -818,7 +824,7 @@
 
     function buildBarChart(data) {
       const count = data.count || 0;
-      const avg = data.avg || {};
+      const avg = extractAverages(data);
 
       if (!count) {
         if (barChart) {
@@ -888,7 +894,7 @@
 
     function buildRadarChart(data) {
       const count = data.count || 0;
-      const avg = data.avg || {};
+      const avg = extractAverages(data);
 
       if (!count) {
         if (radarChart) {
@@ -975,12 +981,11 @@
 
     async function loadForSource(source) {
       const data = await fetchMetrics(source);
-      window.__latestMetricsData = data; // store for download
+      window.__latestMetricsData = data;
       updateMetricCards(data);
       updateCharts(data);
     }
 
-    // Tab behaviour
     tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
         tabs.forEach((t) => t.classList.remove("active"));
@@ -990,7 +995,6 @@
       });
     });
 
-    // Download JSON snapshot
     downloadBtn.addEventListener("click", () => {
       const data = window.__latestMetricsData || null;
       if (!data) {
@@ -1001,8 +1005,8 @@
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
       const srcKey = data.source || "all";
+      const a = document.createElement("a");
       a.href = url;
       a.download = `cicd-metrics-${srcKey}.json`;
       document.body.appendChild(a);
