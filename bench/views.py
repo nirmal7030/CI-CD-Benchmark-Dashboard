@@ -52,7 +52,8 @@ def api_ingest(request):
 
     if not expected_key:
         return JsonResponse(
-            {"error": "Server BENCH_API_KEY not configured"}, status=500
+            {"error": "Server BENCH_API_KEY not configured"},
+            status=500,
         )
 
     if api_key_header != expected_key:

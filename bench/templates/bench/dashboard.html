@@ -397,6 +397,7 @@
 </head>
 <body>
   <div class="page">
+    <!-- HEADER -->
     <header class="header">
       <div class="title-block">
         <div class="badge">
@@ -418,6 +419,7 @@
     </header>
 
     <div class="layout-grid">
+      <!-- LEFT: SUMMARY + CHART ZONE -->
       <section class="card">
         <div class="card-header">
           <div>
@@ -442,6 +444,7 @@
           </div>
         </div>
 
+        <!-- Metric cards -->
         <div class="metric-grid">
           <div class="metric-card">
             <div class="metric-label"><span>LCE</span></div>
@@ -497,6 +500,7 @@
           </div>
         </div>
 
+        <!-- Charts -->
         <div class="charts-grid">
           <div class="chart-card">
             <div class="chart-title">
@@ -538,6 +542,7 @@
         </div>
       </section>
 
+      <!-- RIGHT: METRIC DEFINITIONS / CONTEXT + INTERPRETATION BANDS -->
       <aside class="card-soft">
         <div class="card-header">
           <h2>Novel CI/CD Metrics</h2>
@@ -626,6 +631,7 @@
     </div>
   </div>
 
+  <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
@@ -660,12 +666,13 @@
       all: "All Pipelines",
     };
 
+    // Distinct colours for each metric
     const COLORS = {
-      lce: "#22c55e",
-      prt: "#ef4444",
-      smo: "#eab308",
-      dept: "#3b82f6",
-      clbc: "#8b5cf6",
+      lce: "#22c55e",   // green
+      prt: "#ef4444",   // red
+      smo: "#eab308",   // amber
+      dept: "#3b82f6",  // blue
+      clbc: "#8b5cf6",  // violet
     };
 
     async function fetchMetrics(source) {
@@ -688,10 +695,8 @@
       return Number(num).toFixed(1);
     }
 
+    // Support both shapes: old (avg_lce, avg_prt, ...) and new (avg: {lce, prt, ...})
     function extractAverages(data) {
-      // Support BOTH shapes:
-      // 1) data.avg_lce / avg_prt / ... (your current backend)
-      // 2) data.avg = { lce, prt, ... } (future-friendly)
       const avgRaw = data.avg || {};
 
       return {
@@ -981,11 +986,12 @@
 
     async function loadForSource(source) {
       const data = await fetchMetrics(source);
-      window.__latestMetricsData = data;
+      window.__latestMetricsData = data; // store for download
       updateMetricCards(data);
       updateCharts(data);
     }
 
+    // Tab behaviour
     tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
         tabs.forEach((t) => t.classList.remove("active"));
@@ -995,6 +1001,7 @@
       });
     });
 
+    // Download JSON snapshot
     downloadBtn.addEventListener("click", () => {
       const data = window.__latestMetricsData || null;
       if (!data) {
