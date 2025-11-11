@@ -6,6 +6,9 @@ from bench import views as bench_views
 
 
 def health_view(request):
+    """
+    Simple /health endpoint used by the GitHub Actions workflow.
+    """
     return JsonResponse({"status": "ok"})
 
 
@@ -13,13 +16,13 @@ urlpatterns = [
     # Admin
     path("admin/", admin.site.urls),
 
-    # Health check (used by your workflow)
+    # Health check
     path("health", health_view, name="health"),
 
-    # Dashboard UI
+    # Dashboard UI at /
     path("", bench_views.dashboard, name="dashboard"),
 
-    # Metrics APIs
+    # Metrics APIs (note the trailing slashes!)
     path("api/metrics/ingest/", bench_views.api_ingest, name="api_ingest"),
     path("api/metrics/data/", bench_views.api_metrics_data, name="api_metrics_data"),
 ]
