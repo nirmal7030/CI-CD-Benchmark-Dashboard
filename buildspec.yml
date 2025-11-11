@@ -1,0 +1,119 @@
+version: 0.2
+
+env:
+  variables:
+    METRICS_API: "http://3.238.28.240/api/metrics/ingest/"
+    BENCH_KEY: "bench-22b043e37d23fec188816928ce0f545e"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "=== [INSTALL] Creating virtualenv and installing dependencies ==="
+      - python -m venv venv
+      - . venv/bin/activate
+      - pip install --upgrade pip
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "=== [PRE_BUILD] Starting build timer ==="
+      - BUILD_START=$(date +%s)
+
+  build:
+    commands:
+      - echo "=== [BUILD] Running tests ==="
+      - . venv/bin/activate
+      - TEST_START=$(date +%s)
+
+      # Run pytest if available, otherwise run Django tests
+      - |
+        if command -v pytest >/dev/null 2>&1; then
+          echo "Running tests with pytest..."
+          pytest
+          TEST_EXIT=$?
+        else
+          echo "pytest not found, running Django tests..."
+          python manage.py test
+          TEST_EXIT=$?
+        fi
+
+      # Treat pytest exit code 5 ("no tests collected") as success
+      - |
+        if [ "${TEST_EXIT}" -eq 5 ]; then
+          echo "pytest found no tests, treating as success."
+          TEST_EXIT=0
+        fi
+
+      # If tests really failed (any other non-zero), stop the build
+      - |
+        if [ "${TEST_EXIT}" -ne 0 ]; then
+          echo "Tests failed with exit code ${TEST_EXIT}"
+          exit ${TEST_EXIT}
+        fi
+
+      - TEST_END=$(date +%s)
+      - BUILD_END=$(date +%s)
+
+      - BUILD_DURATION=$((BUILD_END - BUILD_START))
+      - TEST_DURATION=$((TEST_END - TEST_START))
+
+      - echo "Build duration: ${BUILD_DURATION}s"
+      - echo "Test  duration: ${TEST_DURATION}s"
+
+      # Save durations for post_build
+      - echo "BUILD_DURATION=${BUILD_DURATION}" > metrics.env
+      - echo "TEST_DURATION=${TEST_DURATION}" >> metrics.env
+
+  post_build:
+    commands:
+      - echo "=== [POST_BUILD] Computing novel metrics and sending to dashboard ==="
+      - . venv/bin/activate
+      - . ./metrics.env
+
+      - |
+        python - << 'PY'
+        import os, json, requests
+
+        build = float(os.getenv("BUILD_DURATION", "0"))
+        test = float(os.getenv("TEST_DURATION", "0"))
+
+        # Same demo formulas as Jenkins so dashboard looks consistent
+        lce = 120.0 / (build + 60.0) if (build + 60.0) != 0 else 0.0
+        lce = max(0.0, min(1.0, lce))
+        prt = build + test
+        smo = 1.0
+        dept = 5.0
+        clbc = 0.9
+
+        payload = {
+            "source": "codepipeline",
+            "build_duration": build,
+            "test_duration": test,
+            "lce": round(lce, 3),
+            "prt": round(prt, 3),
+            "smo": smo,
+            "dept": dept,
+            "clbc": clbc,
+        }
+
+        url = os.getenv("METRICS_API")
+        bench_key = os.getenv("BENCH_KEY")
+
+        headers = {
+            "Content-Type": "application/json",
+            "X-Bench-Key": bench_key,
+        }
+
+        print("Sending metrics to", url)
+        print("Payload:", payload)
+
+        resp = requests.post(url, headers=headers, data=json.dumps(payload))
+        print("Response:", resp.status_code, resp.text)
+        resp.raise_for_status()
+        PY
+
+artifacts:
+  files:
+    - '**/*'
