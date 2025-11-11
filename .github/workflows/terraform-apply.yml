@@ -137,12 +137,23 @@ jobs:
         run: |
           set -e
 
-          if [ -z "$BENCH_API_KEY" ]; then
-            echo "::warning:: BENCH_API_KEY is empty in GitHub Secrets."
+          # ----- Clean & validate BENCH_API_KEY -----
+          RAW_KEY="$BENCH_API_KEY"
+          # Strip spaces, tabs, newlines, carriage returns
+          CLEAN_KEY="$(printf '%s' "$RAW_KEY" | tr -d '\r\n[:space:]')"
+
+          echo "RAW BENCH_API_KEY length:   ${#RAW_KEY}"
+          echo "CLEAN BENCH_API_KEY length: ${#CLEAN_KEY}"
+
+          if [ -z "$CLEAN_KEY" ]; then
+            echo "::warning:: BENCH_API_KEY is empty after sanitising."
             exit 0
           fi
-          echo "BENCH_API_KEY length: ${#BENCH_API_KEY}"
 
+          # Use cleaned key from here on
+          BENCH_KEY="$CLEAN_KEY"
+
+          # ----- Normalise APP_BASE_URL -----
           RAW_URL="$APP_BASE_URL"
           BASE_URL="$(echo "$RAW_URL" | sed 's/[\"'"'"'[:space:]]//g')"
           if [ -z "$BASE_URL" ]; then
@@ -157,6 +168,7 @@ jobs:
 
           echo "Using BASE_URL: $BASE_URL"
 
+          # ----- Durations with fallbacks -----
           BUILD_DUR=${BUILD_DUR:-0}
           TEST_DUR=${TEST_DUR:-0}
           DEPLOY_DUR=${DEPLOY_DUR:-0}
@@ -165,6 +177,7 @@ jobs:
           echo "Test Duration:   $TEST_DUR s"
           echo "Deploy Duration: $DEPLOY_DUR s"
 
+          # ----- Compute novel metrics -----
           LCE=$(( 100 - BUILD_DUR / 2 ))
           if [ "$LCE" -lt 0 ]; then LCE=0; fi
           if [ "$LCE" -gt 100 ]; then LCE=100; fi
@@ -174,6 +187,7 @@ jobs:
           DEPT=$DEPLOY_DUR
           CLBC=100
 
+          # ----- Build payload -----
           cat > payload.json <<EOF
           {
             "source": "github",
@@ -194,6 +208,7 @@ jobs:
           echo "Payload to send:"
           cat payload.json
 
+          # ----- Health check -----
           echo "Performing health check..."
           if curl --max-time 10 -fsS "$BASE_URL/health" > /dev/null 2>&1; then
             echo "Health check passed"
@@ -201,11 +216,12 @@ jobs:
             echo "Health check FAILED (will still attempt ingest)"
           fi
 
+          # ----- Post metrics -----
           echo "Posting metrics to $BASE_URL/api/metrics/ingest/ ..."
           curl --max-time 15 -sS -o response.txt -w "\nHTTP_STATUS=%{http_code}\n" \
             -X POST "$BASE_URL/api/metrics/ingest/" \
             -H "Content-Type: application/json" \
-            -H "X-Bench-Key: $BENCH_API_KEY" \
+            -H "X-Bench-Key: $BENCH_KEY" \
             --data @payload.json || echo "::warning:: curl command failed"
 
           echo "Response body:"
