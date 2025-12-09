@@ -17,7 +17,7 @@ data "aws_subnets" "default" {
 
 # Security group for HTTP + optional SSH
 resource "aws_security_group" "web_sg" {
-  name        = "cicd-benchmark-web-sg"
+  name        = "cicd-benchmark-web-sg-v2"
   description = "Allow HTTP from anywhere and SSH from my IP"
   vpc_id      = data.aws_vpc.default.id
 
@@ -45,7 +45,7 @@ resource "aws_security_group" "web_sg" {
   }
 
   tags = {
-    Name = "cicd-benchmark-web-sg"
+    Name = "cicd-benchmark-web-sg-v2"
   }
 }
 
@@ -54,7 +54,7 @@ resource "aws_security_group" "web_sg" {
 #############################################
 
 resource "aws_iam_role" "ec2_role" {
-  name = "cicd-benchmark-ec2-role"
+  name = "cicd-benchmark-ec2-role-v2" # renamed to avoid duplication
 
   assume_role_policy = <<-EOF
   {
@@ -78,7 +78,7 @@ resource "aws_iam_role_policy_attachment" "ec2_ssm_core" {
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "cicd-benchmark-ec2-profile"
+  name = "cicd-benchmark-ec2-profile-v2" # renamed to match
   role = aws_iam_role.ec2_role.name
 }
 
@@ -169,6 +169,6 @@ resource "aws_instance" "web" {
   EOF
 
   tags = {
-    Name = "cicd-benchmark-web"
+    Name = "cicd-benchmark-web-v2"
   }
 }
